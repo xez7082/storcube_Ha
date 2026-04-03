@@ -5,7 +5,6 @@
   "issue_tracker": "https://github.com/jon7119/storcube_Ha/issues",
   "dependencies": ["mqtt"],
   "codeowners": ["@jon7119"],
-  "requirements": ["requests~=2.32.3"],
   "iot_class": "local_push",
   "version": "1.2.31",
   "config_flow": true,
