@@ -60,6 +60,8 @@ WS_RETRY_MIN = 5
 WS_RETRY_MAX = 300
 # Sans trame reçue pendant ce délai, on relance l'abonnement.
 WS_HEARTBEAT = 30
+# Au-delà, les données temps réel sont considérées comme périmées.
+WS_FRESH_MAX = 180
 
 STORAGE_VERSION = 1
 
@@ -203,6 +205,16 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
     # Agrégation des données
     # ------------------------------------------------------------------
 
+    def _ws_is_fresh(self) -> bool:
+        """Indiquer si le WebSocket a livré des données récemment."""
+        if not self._last_ws_update:
+            return False
+        try:
+            age = datetime.now() - datetime.fromisoformat(self._last_ws_update)
+        except (TypeError, ValueError):
+            return False
+        return age.total_seconds() < WS_FRESH_MAX
+
     async def _async_update_data(self) -> dict[str, dict]:
         """Combiner les données REST et WebSocket, par equip_id.
 
@@ -211,6 +223,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         """
         try:
             firmware_version = self._raw["firmware"].get("current_version")
+            fresh = self._ws_is_fresh()
             combined: dict[str, dict] = {}
             for equip_id in self._known_devices:
                 merged = dict(self._raw["rest_api"].get(equip_id, {}))
@@ -219,6 +232,9 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 # jamais dans les trames WebSocket.
                 if firmware_version and firmware_version != "Inconnue":
                     merged.setdefault("firmware_version", firmware_version)
+                # Fraîcheur des données temps réel, faute de champ fgOnline
+                # exploitable dans les trames.
+                merged["ws_fresh"] = fresh and equip_id in self._raw["websocket"]
                 combined[equip_id] = merged
             return combined
         except Exception as err:  # noqa: BLE001
