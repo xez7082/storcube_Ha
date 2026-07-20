@@ -1,37 +1,55 @@
 {
-    "config": {
-        "step": {
-            "user": {
-                "title": "Configuration de StorCube Battery Monitor",
-                "description": "Configurez votre connexion MQTT et les identifiants de l'appareil",
-                "data": {
-                    "host": "Adresse IP du broker MQTT",
-                    "port": "Port du broker MQTT",
-                    "username": "Nom d'utilisateur MQTT",
-                    "password": "Mot de passe MQTT",
-                    "app_code": "Code de l'application",
-                    "login_name": "Nom de connexion de l'appareil",
-                    "device_password": "Mot de passe de l'appareil"
-                },
-                "data_description": {
-                    "host": "L'adresse IP de votre broker MQTT (ex: 192.168.1.155)",
-                    "port": "Le port de votre broker MQTT (par défaut: 1883)",
-                    "username": "Le nom d'utilisateur pour se connecter au broker MQTT",
-                    "password": "Le mot de passe pour se connecter au broker MQTT",
-                    "app_code": "Le code de l'application fourni par Storcube",
-                    "login_name": "Votre nom de connexion Storcube",
-                    "device_password": "Votre mot de passe Storcube"
-                }
-            }
-        },
-        "error": {
-            "cannot_connect": "Impossible de se connecter au broker MQTT",
-            "invalid_auth": "Authentification invalide",
-            "invalid_device": "Code de l'application ou identifiants invalides",
-            "unknown": "Erreur inattendue"
-        },
-        "abort": {
-            "already_configured": "L'appareil est déjà configuré"
+  "config": {
+    "step": {
+      "user": {
+        "title": "Batterie Storcube",
+        "description": "Identifiants de votre compte Baterway / Storcube.",
+        "data": {
+          "device_id": "Identifiant de l'équipement",
+          "login_name": "Identifiant de connexion",
+          "auth_password": "Mot de passe",
+          "app_code": "Code application"
         }
+      },
+      "reauth_confirm": {
+        "title": "Réauthentification Storcube",
+        "description": "Les identifiants de la batterie {device_id} ont été refusés. Saisissez-les à nouveau.",
+        "data": {
+          "login_name": "Identifiant de connexion",
+          "auth_password": "Mot de passe"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigurer la batterie Storcube",
+        "data": {
+          "device_id": "Identifiant de l'équipement",
+          "login_name": "Identifiant de connexion",
+          "auth_password": "Mot de passe",
+          "app_code": "Code application"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de joindre l'API Storcube.",
+      "invalid_auth": "Identifiants refusés par l'API.",
+      "unknown": "Erreur inattendue."
+    },
+    "abort": {
+      "already_configured": "Cette batterie est déjà configurée.",
+      "reauth_successful": "Réauthentification réussie.",
+      "reconfigure_successful": "Configuration mise à jour.",
+      "wrong_device": "Cet identifiant ne correspond pas à la batterie configurée."
     }
-} 
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options Storcube",
+        "description": "Pour modifier vos identifiants, utilisez « Reconfigurer » sur l'entrée.",
+        "data": {
+          "rest_interval": "Intervalle d'interrogation de l'API (secondes)"
+        }
+      }
+    }
+  }
+}
