@@ -104,11 +104,11 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         self._ws_task: asyncio.Task | None = None
         self._rest_task: asyncio.Task | None = None
 
+        # Le gestionnaire de firmware réutilise l'appelant authentifié du
+        # coordinateur plutôt que de refaire son propre login.
         self.firmware_manager = StorCubeFirmwareManager(
-            hass=hass,
+            api_call=self._async_api_call,
             device_id=config_entry.data[CONF_DEVICE_ID],
-            login_name=config_entry.data[CONF_LOGIN_NAME],
-            auth_password=config_entry.data[CONF_AUTH_PASSWORD],
             app_code=config_entry.data.get(CONF_APP_CODE, DEFAULT_APP_CODE),
         )
 
@@ -476,13 +476,9 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         return firmware_info
 
-    async def async_get_firmware_info(self) -> dict | None:
-        """Obtenir les informations firmware auprès du gestionnaire dédié."""
-        try:
-            return await self.firmware_manager.get_firmware_info()
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Erreur d'obtention des informations firmware : %s", err)
-            return None
+    async def async_get_firmware_info(self) -> dict:
+        """Retourner le dernier état firmware connu, sans appel réseau."""
+        return await self.firmware_manager.get_firmware_info()
 
     check_firmware_upgrade = async_check_firmware_upgrade
     get_firmware_info = async_get_firmware_info
@@ -491,10 +487,18 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
     # Boucle REST
     # ------------------------------------------------------------------
 
+    @property
+    def _rest_interval(self) -> int:
+        """Intervalle de la boucle REST, réglable dans les options."""
+        try:
+            return int(self.config_entry.options.get("rest_interval", REST_INTERVAL))
+        except (TypeError, ValueError):
+            return REST_INTERVAL
+
     async def _rest_loop(self) -> None:
         """Interroger périodiquement l'API REST, avec backoff exponentiel."""
         firmware_counter = 0
-        delay = REST_INTERVAL
+        delay = self._rest_interval
         failures = 0
 
         while True:
@@ -504,7 +508,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 raise
             except Exception as err:  # noqa: BLE001
                 failures += 1
-                delay = min(REST_INTERVAL * (2**failures), REST_BACKOFF_MAX)
+                delay = min(self._rest_interval * (2**failures), REST_BACKOFF_MAX)
                 # Seul le premier échec d'une série est journalisé en warning :
                 # évite de saturer les logs pendant une panne prolongée.
                 if failures == 1:
@@ -525,7 +529,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
             if failures:
                 _LOGGER.info("Boucle REST rétablie après %s tentatives", failures)
             failures = 0
-            delay = REST_INTERVAL
+            delay = self._rest_interval
 
             try:
                 if scene_data:
