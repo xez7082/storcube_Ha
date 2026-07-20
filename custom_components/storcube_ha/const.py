@@ -27,6 +27,7 @@ FIRMWARE_URL = "http://baterway.com/api/equip/version/need/upgrade?equipId="
 OUTPUT_URL = "http://baterway.com/api/scene/user/list/V2?equipId="
 SET_POWER_URL = "http://baterway.com/api/slb/equip/set/power"
 SET_THRESHOLD_URL = "http://baterway.com/api/scene/threshold/set"
+QUERY_THRESHOLD_URL = "http://baterway.com/api/scene/threshold/query"
 
 # ---------------------------------------------------------------------------
 # Topics MQTT — un topic distinct par grandeur, sans collision.
@@ -71,3 +72,18 @@ ATTR_FIRMWARE_CURRENT = "current_version"
 ATTR_FIRMWARE_LATEST = "latest_version"
 ATTR_FIRMWARE_UPGRADE_AVAILABLE = "upgrade_available"
 ATTR_FIRMWARE_NOTES = "firmware_notes"
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+SERVICE_SET_POWER = "set_power"
+SERVICE_SET_THRESHOLD = "set_threshold"
+ATTR_POWER = "power"
+ATTR_THRESHOLD = "threshold"
+ATTR_DEVICE_ID = "device_id"
+
+# Bornes des consignes.
+MIN_POWER = 0
+MAX_POWER = 800
+MIN_THRESHOLD = 0
+MAX_THRESHOLD = 100
