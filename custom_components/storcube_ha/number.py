@@ -43,15 +43,19 @@ async def async_setup_entry(
     @callback
     def _async_add_new_devices() -> None:
         """Créer les entités des batteries découvertes depuis le dernier appel."""
-        new: list[NumberEntity] = []
-        for equip_id in coordinator.data or {}:
-            if equip_id in known:
-                continue
-            known.add(equip_id)
-            new.append(StorCubePowerNumber(coordinator, equip_id))
-            new.append(StorCubeThresholdNumber(coordinator, equip_id))
-        if new:
-            async_add_entities(new)
+        # Les consignes s'appliquent au stack et sont envoyées avec
+        # l'equipId du maître. Créer ces curseurs sur un esclave laisserait
+        # croire qu'on pilote cette batterie-là.
+        master = coordinator.master_equip_id
+        if master in known or master not in (coordinator.data or {}):
+            return
+        known.add(master)
+        async_add_entities(
+            [
+                StorCubePowerNumber(coordinator, master),
+                StorCubeThresholdNumber(coordinator, master),
+            ]
+        )
 
     _async_add_new_devices()
     config_entry.async_on_unload(
