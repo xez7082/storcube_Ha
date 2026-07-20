@@ -26,7 +26,10 @@ from .const import (
     DEFAULT_APP_CODE,
     DOMAIN,
     FIRMWARE_URL,
+    MAX_POWER,
+    MIN_POWER,
     OUTPUT_URL,
+    QUERY_THRESHOLD_URL,
     SET_POWER_URL,
     SET_THRESHOLD_URL,
     TOKEN_URL,
@@ -93,6 +96,9 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         self._token_lock = asyncio.Lock()
 
         self._known_devices: set[str] = set()
+        # L'API accepte le seuil sous plusieurs noms de champ selon les
+        # firmwares ; on retient celui qui a fonctionné.
+        self._threshold_field: str | None = None
         self._mqtt_available = False
 
         self._ws_task: asyncio.Task | None = None
@@ -293,7 +299,13 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
 
     async def _async_api_call(
-        self, method: str, url: str, *, params: dict | None = None, retry: bool = True
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        retry: bool = True,
     ) -> dict | None:
         """Appeler l'API en réinjectant un token frais sur un 401/403."""
         headers = await self._async_headers()
@@ -303,13 +315,14 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 url,
                 headers=headers,
                 params=params,
+                json=json_body,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as resp:
                 if resp.status in (401, 403) and retry:
                     _LOGGER.debug("Token rejeté (%s), renouvellement", resp.status)
                     await self._async_get_token(force_refresh=True)
                     return await self._async_api_call(
-                        method, url, params=params, retry=False
+                        method, url, params=params, json_body=json_body, retry=False
                     )
                 resp.raise_for_status()
                 return await resp.json(content_type=None)
@@ -327,14 +340,29 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         return scene_list[0] if scene_list else None
 
     async def async_set_power_value(self, new_power_value) -> bool:
-        """Modifier la consigne de puissance."""
+        """Modifier la consigne de puissance de sortie."""
+        try:
+            value = int(new_power_value)
+        except (TypeError, ValueError):
+            _LOGGER.error("Consigne de puissance invalide : %r", new_power_value)
+            return False
+
+        if not MIN_POWER <= value <= MAX_POWER:
+            _LOGGER.error(
+                "Consigne de puissance hors bornes (%s-%s W) : %s",
+                MIN_POWER,
+                MAX_POWER,
+                value,
+            )
+            return False
+
         try:
             payload = await self._async_api_call(
                 "GET",
                 SET_POWER_URL,
                 params={
                     "equipId": self.config_entry.data[CONF_DEVICE_ID],
-                    "power": new_power_value,
+                    "power": value,
                 },
             )
         except aiohttp.ClientError as err:
@@ -342,7 +370,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
             return False
 
         if payload and payload.get("code") == 200:
-            _LOGGER.debug("Puissance mise à jour : %s W", new_power_value)
+            _LOGGER.debug("Puissance mise à jour : %s W", value)
             await self.async_request_refresh()
             return True
 
@@ -353,29 +381,75 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         return False
 
     async def async_set_threshold_value(self, new_threshold_value) -> bool:
-        """Modifier le seuil de décharge."""
+        """Modifier le seuil de décharge.
+
+        L'API n'est pas documentée et accepte le seuil sous des noms de champ
+        différents selon les firmwares. On essaie les variantes connues une
+        seule fois, puis on réutilise celle qui a fonctionné.
+        """
+        try:
+            value = int(new_threshold_value)
+        except (TypeError, ValueError):
+            _LOGGER.error("Seuil invalide : %r", new_threshold_value)
+            return False
+
+        if not 0 <= value <= 100:
+            _LOGGER.error("Seuil hors bornes (0-100 %%) : %s", value)
+            return False
+
+        equip_id = self.config_entry.data[CONF_DEVICE_ID]
+        fields = (
+            [self._threshold_field]
+            if self._threshold_field
+            else ["reserved", "threshold", "data"]
+        )
+
+        for field in fields:
+            body = {field: str(value), "equipId": equip_id}
+            try:
+                payload = await self._async_api_call(
+                    "POST", SET_THRESHOLD_URL, json_body=body
+                )
+            except aiohttp.ClientError as err:
+                _LOGGER.error("Erreur lors de la modification du seuil : %s", err)
+                return False
+
+            if payload and payload.get("code") == 200:
+                if self._threshold_field != field:
+                    _LOGGER.info("Champ de seuil retenu pour l'API : %s", field)
+                self._threshold_field = field
+                await self.async_request_refresh()
+                return True
+
+            _LOGGER.debug(
+                "Champ de seuil %s refusé : %s", field, (payload or {}).get("message")
+            )
+
+        # La variante mémorisée a cessé de fonctionner : on repartira d'une
+        # découverte complète au prochain appel.
+        self._threshold_field = None
+        _LOGGER.error("Aucune variante de champ acceptée pour le seuil")
+        return False
+
+    async def async_get_threshold(self) -> int | None:
+        """Lire le seuil de décharge courant."""
         try:
             payload = await self._async_api_call(
                 "GET",
-                SET_THRESHOLD_URL,
-                params={
-                    "equipId": self.config_entry.data[CONF_DEVICE_ID],
-                    "threshold": new_threshold_value,
-                },
+                QUERY_THRESHOLD_URL,
+                params={"equipId": self.config_entry.data[CONF_DEVICE_ID]},
             )
         except aiohttp.ClientError as err:
-            _LOGGER.error("Erreur lors de la modification du seuil : %s", err)
-            return False
+            _LOGGER.debug("Lecture du seuil impossible : %s", err)
+            return None
 
-        if payload and payload.get("code") == 200:
-            _LOGGER.debug("Seuil mis à jour : %s %%", new_threshold_value)
-            await self.async_request_refresh()
-            return True
-
-        _LOGGER.error(
-            "Échec de la mise à jour du seuil : %s", (payload or {}).get("message")
-        )
-        return False
+        if not payload:
+            return None
+        try:
+            return int(payload["data"])
+        except (KeyError, TypeError, ValueError):
+            _LOGGER.debug("Réponse de seuil inattendue : %s", payload)
+            return None
 
     # Alias rétrocompatibles avec l'ancienne API du coordinateur.
     set_power_value = async_set_power_value
