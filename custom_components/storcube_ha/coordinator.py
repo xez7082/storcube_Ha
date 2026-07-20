@@ -58,6 +58,8 @@ TOKEN_TTL = timedelta(hours=12)
 # Délai de reconnexion du WebSocket.
 WS_RETRY_MIN = 5
 WS_RETRY_MAX = 300
+# Sans trame reçue pendant ce délai, on relance l'abonnement.
+WS_HEARTBEAT = 30
 
 STORAGE_VERSION = 1
 
@@ -577,24 +579,59 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
     async def _websocket_loop(self) -> None:
         """Maintenir la connexion WebSocket et traiter les trames reçues."""
         retry = WS_RETRY_MIN
+        equip_id = self.config_entry.data[CONF_DEVICE_ID]
+        subscribe = json.dumps({"reportEquip": [equip_id]})
 
         while True:
             try:
                 token = await self._async_get_token()
-                headers = {"Authorization": token}
+                # Le serveur attend le token dans le chemin de l'URL, pas
+                # seulement dans les en-têtes.
+                uri = f"{WS_URI}{token}"
+                headers = {
+                    "Authorization": token,
+                    "Content-Type": "application/json",
+                    "accept-language": "fr-FR",
+                }
+
                 # websockets >= 14 utilise additional_headers ; les versions
                 # antérieures attendent extra_headers.
                 try:
                     connection = websockets.connect(
-                        WS_URI, additional_headers=headers
+                        uri,
+                        additional_headers=headers,
+                        ping_interval=15,
+                        ping_timeout=5,
                     )
                 except TypeError:
-                    connection = websockets.connect(WS_URI, extra_headers=headers)
+                    connection = websockets.connect(
+                        uri,
+                        extra_headers=headers,
+                        ping_interval=15,
+                        ping_timeout=5,
+                    )
 
                 async with connection as websocket:
                     _LOGGER.debug("WebSocket StorCube connecté")
                     retry = WS_RETRY_MIN
-                    async for message in websocket:
+
+                    # Sans cette trame d'abonnement, le serveur accepte la
+                    # connexion mais n'envoie jamais de données.
+                    await websocket.send(subscribe)
+                    _LOGGER.debug("Abonnement WebSocket envoyé : %s", subscribe)
+
+                    while True:
+                        try:
+                            message = await asyncio.wait_for(
+                                websocket.recv(), timeout=WS_HEARTBEAT
+                            )
+                        except TimeoutError:
+                            # Silence prolongé : on relance l'abonnement pour
+                            # vérifier que la session est toujours vivante.
+                            _LOGGER.debug("Silence WebSocket, relance de l'abonnement")
+                            await websocket.send(subscribe)
+                            continue
+
                         try:
                             await self._async_handle_ws_message(message)
                         except asyncio.CancelledError:
@@ -612,16 +649,83 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
             await asyncio.sleep(retry)
             retry = min(retry * 2, WS_RETRY_MAX)
 
+    @staticmethod
+    def _extract_batteries(payload) -> list[dict]:
+        """Extraire les dictionnaires de batterie d'une trame WebSocket.
+
+        L'API mélange plusieurs formes selon les trames :
+          {"<equipId>": {"totalPv1power": .., "list": [{..}]}}
+          {"list": [{..}]}
+          {"code": 200, "data": [{..}]}
+        Les totaux portés par le conteneur sont fusionnés dans chaque
+        batterie afin que les capteurs les trouvent au même niveau.
+        """
+        batteries: list[dict] = []
+
+        def collect(node, fallback_id=None):
+            if isinstance(node, list):
+                for item in node:
+                    collect(item, fallback_id)
+                return
+            if not isinstance(node, dict):
+                return
+
+            inner = node.get("list")
+            if isinstance(inner, list):
+                totals = {
+                    key: value
+                    for key, value in node.items()
+                    if key != "list" and not isinstance(value, (dict, list))
+                }
+                for item in inner:
+                    if not isinstance(item, dict):
+                        continue
+                    merged = {**totals, **item}
+                    if fallback_id:
+                        merged.setdefault("equipId", fallback_id)
+                    if merged.get("equipId"):
+                        batteries.append(merged)
+                return
+
+            if node.get("equipId") or fallback_id:
+                entry = dict(node)
+                if fallback_id:
+                    entry.setdefault("equipId", fallback_id)
+                if entry.get("equipId"):
+                    batteries.append(entry)
+
+        if not isinstance(payload, dict):
+            return batteries
+
+        if isinstance(payload.get("list"), list):
+            collect(payload)
+        elif payload.get("code") == 200 and isinstance(payload.get("data"), list):
+            collect(payload["data"])
+        else:
+            for key, value in payload.items():
+                if isinstance(value, (dict, list)):
+                    # La clé est généralement l'equipId lui-même.
+                    collect(value, key if str(key).isdigit() else None)
+
+        return batteries
+
     async def _async_handle_ws_message(self, message) -> None:
         """Traiter une trame WebSocket et mettre à jour l'état brut."""
         data = json.loads(message)
-        batteries = data.get("list")
+
+        # Le serveur émet des accusés de réception textuels.
+        if not data or not isinstance(data, dict):
+            _LOGGER.debug("Trame WebSocket non exploitable : %r", data)
+            return
+
+        batteries = self._extract_batteries(data)
         if not batteries:
+            _LOGGER.debug("Trame WebSocket sans batterie : clés=%s", list(data.keys()))
             return
 
         updated = False
         for battery in batteries:
-            equip_id = battery.get("equipId")
+            equip_id = str(battery.get("equipId"))
             if not equip_id:
                 continue
 
@@ -629,8 +733,8 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
 
             values = {
                 "status": battery.get("fgOnline", 0),
-                "power": battery.get("power", 0),
-                "solar": battery.get("solarPower", 0),
+                "power": battery.get("invPower", battery.get("power", 0)),
+                "solar": battery.get("pv1power", battery.get("solarPower", 0)),
                 "capacity": battery.get("soc", 0),
             }
 
@@ -639,6 +743,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 "battery_power": values["power"],
                 "battery_solar": values["solar"],
                 "battery_capacity": values["capacity"],
+                # Trame brute complète : c'est elle que lisent les capteurs.
                 "battery_output": battery,
                 "battery_report": {"list": [battery]},
             }
