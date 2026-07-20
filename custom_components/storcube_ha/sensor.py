@@ -81,6 +81,24 @@ WORK_STATUS_MAP = {0: "Arrêté", 1: "En fonctionnement", 2: "En erreur"}
 OPERATING_MODE_MAP = {0: "Normal", 1: "Économie", 2: "Boost", 3: "Veille"}
 
 
+def _solar_total(data: dict) -> float | None:
+    """Somme des deux entrées solaires, si au moins une est connue."""
+    pv1 = _num(_first(data, "pv1power", "totalPv1power"))
+    pv2 = _num(_first(data, "pv2power", "totalPv2power"))
+    if pv1 is None and pv2 is None:
+        return None
+    return (pv1 or 0) + (pv2 or 0)
+
+
+def _battery_power(data: dict) -> float | None:
+    """Puissance de charge (positive) ou de décharge (négative)."""
+    solar = _solar_total(data)
+    inverter = _num(_first(data, "totalInvPower", "invPower"))
+    if solar is None or inverter is None:
+        return None
+    return round(solar - inverter, 1)
+
+
 def _output_type(data: dict) -> Any:
     """Traduire le type de sortie, numérique ou textuel."""
     value = _first(data, "outputType", "output_type")
@@ -143,12 +161,17 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="battery_power",
+        master_only=True,
         name="Puissance batterie",
+        icon="mdi:battery-charging",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value_fn=lambda d: _num(_first(d, "invPower", "battery_power")),
+        # Positif = la batterie se charge, négatif = elle se décharge.
+        # L'API n'expose pas cette grandeur : on la déduit de l'entrée
+        # solaire moins ce qui part vers l'onduleur.
+        value_fn=_battery_power,
     ),
     StorCubeSensorDescription(
         key="battery_temperature",
@@ -279,20 +302,6 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
         name="État de connexion",
         icon="mdi:wifi",
         value_fn=_online,
-    ),
-    StorCubeSensorDescription(
-        key="error_code",
-        name="Code d'erreur",
-        icon="mdi:alert-circle",
-        value_fn=lambda d: _first(d, "errorCode"),
-    ),
-    StorCubeSensorDescription(
-        key="operating_mode",
-        name="Mode de fonctionnement",
-        icon="mdi:cog",
-        value_fn=lambda d: OPERATING_MODE_MAP.get(
-            _first(d, "operatingMode"), None
-        ),
     ),
     StorCubeSensorDescription(
         key="firmware_version",
