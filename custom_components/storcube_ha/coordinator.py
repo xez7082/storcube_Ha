@@ -125,6 +125,11 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------
 
     @property
+    def master_equip_id(self) -> str:
+        """Identifiant de la batterie maître, celle que pilote l'API."""
+        return str(self.config_entry.data[CONF_DEVICE_ID])
+
+    @property
     def firmware(self) -> dict:
         """Retourner les informations firmware courantes."""
         return self._raw["firmware"]
