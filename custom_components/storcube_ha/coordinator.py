@@ -30,7 +30,9 @@ from .const import (
     SET_POWER_URL,
     SET_THRESHOLD_URL,
     TOKEN_URL,
+    TOPIC_BATTERY_CAPACITY,
     TOPIC_BATTERY_POWER,
+    TOPIC_BATTERY_REPORT,
     TOPIC_BATTERY_SOLAR,
     TOPIC_BATTERY_STATUS,
     TOPIC_FIRMWARE,
@@ -42,14 +44,6 @@ from .const import (
 from .firmware import StorCubeFirmwareManager
 
 _LOGGER = logging.getLogger(__name__)
-
-# Ces deux topics étaient publiés par le listener WebSocket sans être définis
-# dans const.py. On les importe si présents, sinon on les dérive.
-try:  # pragma: no cover
-    from .const import TOPIC_BATTERY_CAPACITY, TOPIC_BATTERY_REPORT
-except ImportError:  # pragma: no cover
-    TOPIC_BATTERY_CAPACITY = "storcube/{device_id}/capacity"
-    TOPIC_BATTERY_REPORT = "storcube/{device_id}/report"
 
 # Intervalle nominal de la boucle REST, et bornes du backoff en cas d'échec.
 REST_INTERVAL = 30
@@ -99,7 +93,6 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         self._token_lock = asyncio.Lock()
 
         self._known_devices: set[str] = set()
-        self._mqtt_unsubs: list = []
         self._mqtt_available = False
 
         self._ws_task: asyncio.Task | None = None
@@ -190,13 +183,6 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                     pass
         self._ws_task = None
         self._rest_task = None
-
-        for unsub in self._mqtt_unsubs:
-            try:
-                unsub()
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Erreur au désabonnement MQTT : %s", err)
-        self._mqtt_unsubs.clear()
 
         await super().async_shutdown()
 
@@ -640,52 +626,6 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 self._mqtt_available = False
                 return
 
-    async def _async_subscribe_device(self, equip_id: str) -> None:
-        """S'abonner aux topics MQTT d'une batterie donnée."""
-        if not self._mqtt_available:
-            return
-
-        topics = self._topics_for(equip_id)
-        for kind in ("status", "power", "solar", "capacity"):
-            topic = topics[kind]
-
-            async def _handler(msg, equip_id=equip_id, kind=kind):
-                await self._async_mqtt_message(equip_id, kind, msg)
-
-            try:
-                unsub = await mqtt.async_subscribe(self.hass, topic, _handler, 0)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Abonnement MQTT impossible sur %s : %s", topic, err)
-                return
-            self._mqtt_unsubs.append(unsub)
-
-    async def _async_mqtt_message(self, equip_id: str, kind: str, msg) -> None:
-        """Traiter un message MQTT entrant pour une batterie identifiée."""
-        try:
-            payload = json.loads(msg.payload)
-        except (json.JSONDecodeError, TypeError):
-            _LOGGER.debug("Message MQTT non décodable sur %s", msg.topic)
-            return
-
-        value = payload.get("value")
-        key = {
-            "status": "battery_status",
-            "power": "battery_power",
-            "solar": "battery_solar",
-            "capacity": "battery_capacity",
-        }[kind]
-
-        if kind != "status":
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                _LOGGER.debug("Valeur MQTT invalide sur %s : %r", msg.topic, value)
-                return
-
-        self._raw["websocket"].setdefault(equip_id, {})[key] = value
-        self._last_ws_update = datetime.now().isoformat()
-        await self.async_request_refresh()
-
     # ------------------------------------------------------------------
     # Registre d'appareils
     # ------------------------------------------------------------------
@@ -707,5 +647,4 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._raw["rest_api"].setdefault(equip_id, {})
         self._known_devices.add(equip_id)
-        self.hass.async_create_task(self._async_subscribe_device(equip_id))
         _LOGGER.info("Nouvelle batterie StorCube détectée : %s", equip_id)
