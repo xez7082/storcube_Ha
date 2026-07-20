@@ -119,6 +119,10 @@ class StorCubeSensorDescription(SensorEntityDescription):
     """Description d'un capteur StorCube."""
 
     value_fn: Callable[[dict], Any]
+    # Vrai pour les grandeurs décrivant le stack entier ou issues de l'API
+    # REST, qui n'interroge que la batterie maître. Créées sur un esclave,
+    # ces entités resteraient indéfiniment à « unknown ».
+    master_only: bool = False
 
 
 SENSORS: tuple[StorCubeSensorDescription, ...] = (
@@ -169,6 +173,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="battery_threshold",
+        master_only=True,
         name="Seuil batterie",
         icon="mdi:battery-charging-medium",
         native_unit_of_measurement=PERCENTAGE,
@@ -177,6 +182,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="reserved",
+        master_only=True,
         name="Niveau de réserve",
         icon="mdi:battery-charging-medium",
         native_unit_of_measurement=PERCENTAGE,
@@ -185,6 +191,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="solar_power",
+        master_only=True,
         name="Puissance solaire 1",
         icon="mdi:solar-power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -195,6 +202,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="solar_power_2",
+        master_only=True,
         name="Puissance solaire 2",
         icon="mdi:solar-power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -205,6 +213,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="output_power",
+        master_only=True,
         name="Puissance de sortie",
         icon="mdi:flash",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -217,6 +226,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="model",
+        master_only=True,
         name="Modèle",
         icon="mdi:information",
         value_fn=lambda d: _first(d, "equipModelCode", "equip_model"),
@@ -229,12 +239,14 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="output_type",
+        master_only=True,
         name="Type de sortie",
         icon="mdi:power-plug",
         value_fn=_output_type,
     ),
     StorCubeSensorDescription(
         key="work_status",
+        master_only=True,
         name="État de fonctionnement",
         icon="mdi:power",
         value_fn=lambda d: WORK_STATUS_MAP.get(
@@ -243,6 +255,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
     ),
     StorCubeSensorDescription(
         key="online_status",
+        master_only=True,
         name="État de connexion",
         icon="mdi:wifi",
         value_fn=_online,
@@ -272,7 +285,12 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
 
 @dataclass(frozen=True, kw_only=True)
 class StorCubeEnergyDescription(SensorEntityDescription):
-    """Description d'un compteur d'énergie intégré à partir d'une puissance."""
+    """Description d'un compteur d'énergie intégré à partir d'une puissance.
+
+    Tous ces compteurs portent sur le stack et ne sont créés que pour la
+    batterie maître : dupliqués sur un esclave, ils feraient compter la
+    même énergie deux fois dans le tableau de bord Énergie.
+    """
 
     power_fn: Callable[[dict], float | None]
 
@@ -347,18 +365,24 @@ async def async_setup_entry(
     def _async_add_new_devices() -> None:
         """Créer les entités des batteries découvertes depuis le dernier appel."""
         new: list[SensorEntity] = []
+        master = coordinator.master_equip_id
         for equip_id in coordinator.data or {}:
             if equip_id in known:
                 continue
             known.add(equip_id)
+            is_master = str(equip_id) == master
+
             new.extend(
-                StorCubeSensor(coordinator, equip_id, desc) for desc in SENSORS
+                StorCubeSensor(coordinator, equip_id, desc)
+                for desc in SENSORS
+                if is_master or not desc.master_only
             )
-            new.extend(
-                StorCubeEnergySensor(coordinator, equip_id, desc)
-                for desc in ENERGY_SENSORS
-            )
-            new.append(StorCubeFirmwareSensor(coordinator, equip_id))
+            if is_master:
+                new.extend(
+                    StorCubeEnergySensor(coordinator, equip_id, desc)
+                    for desc in ENERGY_SENSORS
+                )
+                new.append(StorCubeFirmwareSensor(coordinator, equip_id))
         if new:
             async_add_entities(new)
 
