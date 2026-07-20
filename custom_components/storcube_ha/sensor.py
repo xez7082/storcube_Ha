@@ -102,6 +102,12 @@ def _online(data: dict) -> str | None:
     if fg is not None:
         return "En ligne" if fg == 1 else "Hors ligne"
 
+    # Les champs REST rgOnline/mainEquipOnline se sont révélés peu fiables
+    # (« hors ligne » alors que les données arrivaient). On se rabat sur la
+    # fraîcheur effective du flux temps réel.
+    if data.get("ws_fresh"):
+        return "En ligne"
+
     rg = _first(data, "rgOnline", "rg_online")
     main = _first(data, "mainEquipOnline", "main_equip_online")
     if rg is None and main is None:
@@ -220,9 +226,23 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
+        # Mesure d'abord ; la consigne REST ne sert que de repli quand le
+        # WebSocket n'a encore rien livré.
         value_fn=lambda d: _num(
-            _first(d, "outputPower", "output_power", "totalInvPower", "invPower")
+            _first(d, "totalInvPower", "invPower", "outputPower", "output_power")
         ),
+    ),
+    StorCubeSensorDescription(
+        key="output_setpoint",
+        master_only=True,
+        name="Consigne de sortie",
+        icon="mdi:target",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _num(_first(d, "outputPower", "output_power")),
     ),
     StorCubeSensorDescription(
         key="model",
@@ -337,9 +357,10 @@ ENERGY_SENSORS: tuple[StorCubeEnergyDescription, ...] = (
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_display_precision=3,
-        power_fn=lambda d: _num(
-            _first(d, "outputPower", "output_power", "totalInvPower", "invPower")
-        ),
+        # Uniquement la puissance mesurée : le champ REST outputPower est la
+        # consigne configurée, constante, et son intégration fabriquerait de
+        # l'énergie qui n'a jamais été produite.
+        power_fn=lambda d: _num(_first(d, "totalInvPower", "invPower")),
     ),
 )
 
