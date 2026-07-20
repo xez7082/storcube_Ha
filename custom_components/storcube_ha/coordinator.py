@@ -205,10 +205,15 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         les champs absents.
         """
         try:
+            firmware_version = self._raw["firmware"].get("current_version")
             combined: dict[str, dict] = {}
             for equip_id in self._known_devices:
                 merged = dict(self._raw["rest_api"].get(equip_id, {}))
                 merged.update(self._raw["websocket"].get(equip_id, {}))
+                # La version installée n'est remontée que par l'API firmware,
+                # jamais dans les trames WebSocket.
+                if firmware_version and firmware_version != "Inconnue":
+                    merged.setdefault("firmware_version", firmware_version)
                 combined[equip_id] = merged
             return combined
         except Exception as err:  # noqa: BLE001
@@ -672,18 +677,25 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
 
             inner = node.get("list")
             if isinstance(inner, list):
+                # Les totaux (totalPv1power, totalInvPower, ...) portent sur
+                # l'ensemble du stack. Ne les attacher qu'à la batterie
+                # maître : recopiés sur les esclaves, ils feraient compter
+                # la production plusieurs fois.
                 totals = {
                     key: value
                     for key, value in node.items()
                     if key != "list" and not isinstance(value, (dict, list))
                 }
-                for item in inner:
-                    if not isinstance(item, dict):
-                        continue
-                    merged = {**totals, **item}
-                    if fallback_id:
-                        merged.setdefault("equipId", fallback_id)
-                    if merged.get("equipId"):
+                items = [item for item in inner if isinstance(item, dict)]
+                solo = len(items) == 1
+                for item in items:
+                    equip_id = item.get("equipId") or fallback_id
+                    is_master = solo or (
+                        fallback_id is not None and str(equip_id) == str(fallback_id)
+                    )
+                    merged = {**totals, **item} if is_master else dict(item)
+                    if equip_id:
+                        merged.setdefault("equipId", equip_id)
                         batteries.append(merged)
                 return
 
