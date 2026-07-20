@@ -91,10 +91,21 @@ def _output_type(data: dict) -> Any:
     return OUTPUT_TYPE_MAP.get(value, f"Mode {value}")
 
 
-def _online(data: dict) -> str:
-    """Déduire l'état de connexion global."""
+def _online(data: dict) -> str | None:
+    """Déduire l'état de connexion de la batterie.
+
+    fgOnline vient du WebSocket et concerne la batterie elle-même ; les
+    champs REST rgOnline/mainEquipOnline ne sont remontés que pour le
+    maître et décrivent la passerelle.
+    """
+    fg = _first(data, "fgOnline")
+    if fg is not None:
+        return "En ligne" if fg == 1 else "Hors ligne"
+
     rg = _first(data, "rgOnline", "rg_online")
     main = _first(data, "mainEquipOnline", "main_equip_online")
+    if rg is None and main is None:
+        return None
     return "En ligne" if rg == 1 and main == 1 else "Hors ligne"
 
 
@@ -254,7 +265,7 @@ SENSORS: tuple[StorCubeSensorDescription, ...] = (
         key="firmware_version",
         name="Version firmware",
         icon="mdi:chip",
-        value_fn=lambda d: _first(d, "version"),
+        value_fn=lambda d: _first(d, "version", "firmware_version"),
     ),
 )
 
