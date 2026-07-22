@@ -49,7 +49,4 @@ production : ajouter les compteurs 1 et 2 en plus compterait deux fois.
 ---
 
 Documentation complète, dépannage et sémantique de l'API dans le
-[README](https://github.com/xez7082/storcube_Ha#readme).
-
-Basé sur le travail original de
-[@jon7119](https://github.com/jon7119/storcube_Ha).
+[README](https://github.com/jon7119/storcube_Ha#readme).
