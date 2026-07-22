@@ -1,7 +1,6 @@
 {
   "name": "Storcube Battery Monitor",
   "homeassistant": "2025.9.1",
-  "render_readme": false,
-  "hide_default_branch": true,
-  "country": ["FR"]
+  "render_readme": true,
+  "hide_default_branch": true
 }
