@@ -78,7 +78,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             # Pas de polling : les rafraîchissements sont poussés par la boucle
             # REST et par le listener WebSocket via async_request_refresh().
-            update_interval=None,
+            update_interval=timedelta(seconds=15),
         )
         # self.config_entry est désormais posé par DataUpdateCoordinator.
 
@@ -614,7 +614,11 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         """Maintenir la connexion WebSocket et traiter les trames reçues."""
         retry = WS_RETRY_MIN
         equip_id = self.config_entry.data[CONF_DEVICE_ID]
-        subscribe = json.dumps({"reportEquip": [equip_id]})
+        subscribe = json.dumps({
+            "cmd": "sub",
+            "action": "report",
+            "reportEquip": [equip_id]
+        })
 
         while True:
             try:
