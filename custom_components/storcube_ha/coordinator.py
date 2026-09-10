@@ -533,6 +533,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
         while True:
             try:
                 scene_data = await self.async_get_scene_data()
+                _LOGGER.debug("CONTENU REST BRUT (scene_data) : %s", scene_data)
             except asyncio.CancelledError:
                 raise
             except ConfigEntryAuthFailed as err:
