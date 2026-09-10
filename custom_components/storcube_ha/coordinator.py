@@ -765,7 +765,7 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
 
         batteries = self._extract_batteries(data)
         if not batteries:
-            _LOGGER.debug("Trame WebSocket sans batterie : clés=%s", list(data.keys()))
+            _LOGGER.debug("Trame WebSocket sans batterie : %s", data)
             return
 
         updated = False
@@ -776,26 +776,11 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
 
             self._async_register_device(equip_id, battery)
 
-            # Certaines trames sont partielles (ex : juste un statut ou une
-            # variation de puissance, sans le champ "soc"). On fusionne sur
-            # la trame précédente plutôt que de l'écraser, sinon un champ
-            # absent de cette trame-ci disparaît des capteurs jusqu'à la
-            # prochaine trame complète.
-            previous_output = self._raw["websocket"].get(equip_id, {}).get(
-                "battery_output", {}
-            )
-            merged_output = {**previous_output, **battery}
-
             values = {
-                "status": battery.get("fgOnline", previous_output.get("fgOnline", 0)),
-                "power": battery.get(
-                    "invPower", battery.get("power", previous_output.get("invPower", 0))
-                ),
-                "solar": battery.get(
-                    "pv1power",
-                    battery.get("solarPower", previous_output.get("pv1power", 0)),
-                ),
-                "capacity": battery.get("soc", previous_output.get("soc", 0)),
+                "status": battery.get("fgOnline", 0),
+                "power": battery.get("invPower", battery.get("power", 0)),
+                "solar": battery.get("pv1power", battery.get("solarPower", 0)),
+                "capacity": battery.get("soc", 0),
             }
 
             self._raw["websocket"][equip_id] = {
@@ -803,9 +788,9 @@ class StorCubeDataUpdateCoordinator(DataUpdateCoordinator):
                 "battery_power": values["power"],
                 "battery_solar": values["solar"],
                 "battery_capacity": values["capacity"],
-                # Trame brute fusionnée : c'est elle que lisent les capteurs.
-                "battery_output": merged_output,
-                "battery_report": {"list": [merged_output]},
+                # Trame brute complète : c'est elle que lisent les capteurs.
+                "battery_output": battery,
+                "battery_report": {"list": [battery]},
             }
             updated = True
 
